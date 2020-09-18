@@ -1,0 +1,168 @@
+# HG changeset patch
+# User Bobby Johnson <rjohnson19@gmail.com>
+# Date 1600395676 14400
+#      Thu Sep 17 22:21:16 2020 -0400
+# Node ID d95eef65056e0a44cffceec2a0e5eac76fadaa61
+# Parent  b3ed3176733e7a4a45bdf75ebd698f8b5a0f45c0
+Add ability to disable telemetry recording.
+
+This is done with the hidden pref toolkit.telemetry.disableRecording.
+Restart required to take effect.
+
+Minor changes to about:telemetry to display this state correctly
+and fix a console error when there is no ping to display.
+
+diff --git a/toolkit/components/telemetry/app/TelemetryUtils.jsm b/toolkit/components/telemetry/app/TelemetryUtils.jsm
+--- a/toolkit/components/telemetry/app/TelemetryUtils.jsm
++++ b/toolkit/components/telemetry/app/TelemetryUtils.jsm
+@@ -69,16 +69,17 @@ var TelemetryUtils = {
+     OverrideOfficialCheck: "toolkit.telemetry.send.overrideOfficialCheck",
+     OverridePreRelease: "toolkit.telemetry.testing.overridePreRelease",
+     OverrideUpdateChannel: "toolkit.telemetry.overrideUpdateChannel",
+     Server: "toolkit.telemetry.server",
+     ShutdownPingSender: "toolkit.telemetry.shutdownPingSender.enabled",
+     ShutdownPingSenderFirstSession:
+       "toolkit.telemetry.shutdownPingSender.enabledFirstSession",
+     TelemetryEnabled: "toolkit.telemetry.enabled",
++    RecordingDisabled: "toolkit.telemetry.disableRecording",
+     Unified: "toolkit.telemetry.unified",
+     UntrustedModulesPingFrequency:
+       "toolkit.telemetry.untrustedModulesPing.frequency",
+     UpdatePing: "toolkit.telemetry.updatePing.enabled",
+     NewProfilePingEnabled: "toolkit.telemetry.newProfilePing.enabled",
+     NewProfilePingDelay: "toolkit.telemetry.newProfilePing.delay",
+     PreviousBuildID: "toolkit.telemetry.previousBuildID",
+ 
+@@ -299,21 +300,26 @@ var TelemetryUtils = {
+       prereleaseChannels.push("default");
+     }
+     const isPrereleaseChannel = prereleaseChannels.includes(
+       AppConstants.MOZ_UPDATE_CHANNEL
+     );
+     const isReleaseCandidateOnBeta =
+       AppConstants.MOZ_UPDATE_CHANNEL === "release" &&
+       Services.prefs.getCharPref("app.update.channel", null) === "beta";
+-    Services.telemetry.canRecordBase = true;
++    const isRecordingDisabled = Services.prefs.getBoolPref(
++      this.Preferences.RecordingDisabled,
++      false
++    );
++    Services.telemetry.canRecordBase = !isRecordingDisabled;
+     Services.telemetry.canRecordExtended =
+-      isPrereleaseChannel ||
+-      isReleaseCandidateOnBeta ||
+-      Services.prefs.getBoolPref(this.Preferences.OverridePreRelease, false);
++      !isRecordingDisabled &&
++      (isPrereleaseChannel ||
++        isReleaseCandidateOnBeta ||
++        Services.prefs.getBoolPref(this.Preferences.OverridePreRelease, false));
+   },
+ 
+   /**
+    * @returns {string} The name of the update channel to report
+    * in telemetry.
+    * By default, this is the same as the name of the channel that
+    * the browser uses to download its updates. However in certain
+    * situations, a single update channel provides multiple (distinct)
+diff --git a/toolkit/content/aboutTelemetry.js b/toolkit/content/aboutTelemetry.js
+--- a/toolkit/content/aboutTelemetry.js
++++ b/toolkit/content/aboutTelemetry.js
+@@ -222,19 +222,25 @@ var Settings = {
+     }
+   },
+ 
+   /**
+    * Updates the button & text at the top of the page to reflect Telemetry state.
+    */
+   render() {
+     let settingsExplanation = document.getElementById("settings-explanation");
++    let recordEnabled = Services.telemetry.canRecordBase;
+     let extendedEnabled = Services.telemetry.canRecordExtended;
+ 
+-    let channel = extendedEnabled ? "prerelease" : "release";
++    let channel = "disabled";
++    if (recordEnabled && extendedEnabled) {
++      channel = "prerelease";
++    } else if (recordEnabled) {
++      channel = "release";
++    }
+     let uploadcase = TelemetrySend.sendingEnabled() ? "enabled" : "disabled";
+ 
+     document.l10n.setAttributes(
+       settingsExplanation,
+       "about-telemetry-settings-explanation",
+       { channel, uploadcase }
+     );
+ 
+@@ -1016,28 +1022,31 @@ var StackRenderer = {
+ 
+     div.appendChild(titleElement);
+     div.appendChild(document.createElement("br"));
+   },
+ };
+ 
+ var RawPayloadData = {
+   /**
+-   * Renders the raw pyaload.
++   * Renders the raw payload.
+    */
+   render(aPing) {
+     setHasData("raw-payload-section", true);
+     let pre = document.getElementById("raw-payload-data");
+     pre.textContent = JSON.stringify(aPing.payload, null, 2);
+   },
+ 
+   attachObservers() {
+     document
+       .getElementById("payload-json-viewer")
+       .addEventListener("click", e => {
++        if (!gPingData) {
++          return;
++        }
+         openJsonInFirefoxJsonViewer(JSON.stringify(gPingData.payload, null, 2));
+       });
+   },
+ };
+ 
+ function SymbolicationRequest(
+   aPrefix,
+   aRenderHeader,
+@@ -2381,17 +2390,16 @@ function openJsonInFirefoxJsonViewer(jso
+     window.open("data:application/json;base64," + btoa(json));
+   } catch (e) {
+     show(document.querySelector(".category[value=raw-payload-section]"));
+   }
+ }
+ 
+ function onLoad() {
+   window.removeEventListener("load", onLoad);
+-  Telemetry.scalarAdd("telemetry.about_telemetry_pageload", 1);
+ 
+   // Set the text in the page header and elsewhere that needs the server owner.
+   setupServerOwnerBranding();
+ 
+   // Set up event listeners
+   setupListeners();
+ 
+   // Render settings.
+diff --git a/toolkit/locales/en-US/toolkit/about/aboutTelemetry.ftl b/toolkit/locales/en-US/toolkit/about/aboutTelemetry.ftl
+--- a/toolkit/locales/en-US/toolkit/about/aboutTelemetry.ftl
++++ b/toolkit/locales/en-US/toolkit/about/aboutTelemetry.ftl
+@@ -41,16 +41,17 @@ about-telemetry-raw = Raw JSON
+ about-telemetry-full-sql-warning = NOTE: Slow SQL debugging is enabled. Full SQL strings may be displayed below but they will not be submitted to Telemetry.
+ about-telemetry-fetch-stack-symbols = Fetch function names for stacks
+ about-telemetry-hide-stack-symbols = Show raw stack data
+ # Selects the correct release version
+ # Variables:
+ #   $channel (String): represents the corresponding release data string
+ about-telemetry-data-type =
+     { $channel ->
++        [disabled] no data
+         [release] release data
+        *[prerelease] pre-release data
+     }
+ # Selects the correct upload string
+ # Variables:
+ #   $uploadcase (String): represents a corresponding upload string
+ about-telemetry-upload-type =
+     { $uploadcase ->
