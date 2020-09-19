@@ -1,3 +1,4 @@
-WIN32_REDIST_DIR="C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Redist\MSVC\14.27.29016\x64\Microsoft.VC142.CRT"
-# Automatically download and use compiled C++ components:
-ac_add_options --enable-artifact-builds
+WIN32_REDIST_DIR="C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Redist\MSVC\14.16.27012\x64\Microsoft.VC141.CRT"
+ac_add_options --target=x86_64-pc-mingw32
+ac_add_options --host=x86_64-pc-mingw32
+ac_add_options --enable-optimize
